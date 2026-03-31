@@ -33,7 +33,14 @@ def is_system_reminder_message(message: Message) -> bool:
 
 
 def tool_result_to_message(tool_result: ToolResult) -> Message:
-    """Convert a tool result to a message."""
+    """Convert a tool result to a message.
+
+    When the output is plain text (str), the system message and output are
+    merged into a single TextPart so that the serialized content is a plain
+    string.  Many OpenAI-compatible models expect tool-role message content to
+    be a string and fail to parse the list-of-dicts format that kosong produces
+    when multiple TextParts are present.
+    """
     if tool_result.return_value.is_error:
         assert tool_result.return_value.message, "Error return value should have a message"
         message = tool_result.return_value.message
@@ -44,10 +51,21 @@ def tool_result_to_message(tool_result: ToolResult) -> Message:
             content.extend(_output_to_content_parts(tool_result.return_value.output))
     else:
         content: list[ContentPart] = []
-        if tool_result.return_value.message:
-            content.append(system(tool_result.return_value.message))
-        if tool_result.return_value.output:
-            content.extend(_output_to_content_parts(tool_result.return_value.output))
+        msg = tool_result.return_value.message
+        output = tool_result.return_value.output
+        if output and isinstance(output, str) and output:
+            # Merge system message and text output into one TextPart so
+            # _serialize_content produces a plain str (not a list[dict]).
+            parts: list[str] = []
+            if msg:
+                parts.append(f"<system>{msg}</system>")
+            parts.append(output)
+            content.append(TextPart(text="\n".join(parts)))
+        else:
+            if msg:
+                content.append(system(msg))
+            if output:
+                content.extend(_output_to_content_parts(output))
         if not content:
             content.append(system("Tool output is empty."))
         elif not any(isinstance(part, TextPart) for part in content):

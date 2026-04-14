@@ -1,6 +1,21 @@
+from __future__ import annotations
+
+import json
 from abc import ABC, abstractmethod
 from asyncio import Future
-from typing import Any, ClassVar, Protocol, Self, cast, override, runtime_checkable
+from types import UnionType
+from typing import (
+    Any,
+    ClassVar,
+    Protocol,
+    Self,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    override,
+    runtime_checkable,
+)
 
 import jsonschema
 import pydantic
@@ -13,6 +28,63 @@ from kosong.utils.jsonschema import deref_json_schema
 from kosong.utils.typing import JsonType
 
 type ParametersType = dict[str, Any]
+
+
+def _field_expects_json(value: Any, annotation: Any) -> bool:
+    """Check if *annotation* expects a JSON-serialisable container while *value* is a str.
+
+    Some LLMs serialise list / dict parameters as a JSON **string** instead of the
+    actual object.  Return ``True`` when the annotation is (or contains) ``list``,
+    ``dict``, a ``BaseModel`` subclass, etc. so that we can attempt ``json.loads``.
+    """
+    if not isinstance(value, str):
+        return False
+
+    # Unwrap Optional / Union – only care about the non-None candidates.
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+
+    # Bare list / dict
+    if origin is list or origin is dict:
+        return True
+
+    # BaseModel subclass (including things like Todo, Edit, …)
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return True
+
+    # Union / Optional – recurse into each member
+    if origin is Union or isinstance(annotation, UnionType):
+        return any(_field_expects_json(value, a) for a in args if a is not type(None))
+
+    return False
+
+
+def _coerce_json_strings(arguments: JsonType, params_model: type[BaseModel]) -> JsonType:
+    """Best-effort coercion of string values that should be parsed JSON.
+
+    Inspects every field in *params_model* and, when a value in *arguments* is a
+    ``str`` but the field annotation expects ``list``, ``dict``, or a ``BaseModel``,
+    attempts ``json.loads`` on that string.
+    """
+    if not isinstance(arguments, dict):
+        return arguments
+
+    model_fields = params_model.model_fields
+    coerced: dict[str, Any] = {}
+    for key, value in arguments.items():
+        field_info = model_fields.get(key)
+        if field_info and _field_expects_json(value, field_info.annotation):
+            assert isinstance(value, str)  # guaranteed by _field_expects_json
+            try:
+                parsed = json.loads(value, strict=False)
+                coerced[key] = parsed
+            except (json.JSONDecodeError, ValueError):
+                # If it doesn't parse, leave the original value so pydantic
+                # produces its normal validation error.
+                coerced[key] = value
+        else:
+            coerced[key] = value
+    return coerced
 
 
 class Tool(BaseModel):
@@ -44,7 +116,7 @@ class DisplayBlock(BaseModel, ABC):
     display blocks for their applications.
     """
 
-    __display_block_registry: ClassVar[dict[str, type["DisplayBlock"]]] = {}
+    __display_block_registry: ClassVar[dict[str, type[DisplayBlock]]] = {}
 
     type: str
     ...  # to be added by subclasses
@@ -291,6 +363,11 @@ class CallableTool2[Params: BaseModel](ABC):
 
     async def call(self, arguments: JsonType) -> ToolReturnValue:
         from kosong.tooling.error import ToolValidateError
+
+        # Some LLMs may serialise complex parameters (list, dict, BaseModel) as JSON
+        # strings instead of the actual objects.  Coerce such values before validation
+        # so that the downstream pydantic model_validate succeeds.
+        arguments = _coerce_json_strings(arguments, self.params)
 
         try:
             params = self.params.model_validate(arguments)

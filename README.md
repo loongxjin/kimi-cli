@@ -6,6 +6,7 @@
 > 1. **feat(tooling)**: 为 LLM 参数解析添加 JSON 字符串自动转换 — 某些 LLM 会将 list/dict 等复杂参数序列化为 JSON 字符串，新增 `_coerce_json_strings` 在 pydantic 校验前自动解析。(`packages/kosong/src/kosong/tooling/__init__.py`)
 > 2. **fix(message)**: 合并 system message 和 text output 为单个 TextPart — 兼容 OpenAI 格式模型对 tool-role 消息内容的要求，避免 list-of-dicts 格式解析失败。(`src/kimi_cli/soul/message.py`)
 > 3. **fix(aiohttp)**: 启用 `trust_env=True` — 使 aiohttp ClientSession 正确读取系统代理环境变量（HTTP_PROXY 等）。(`src/kimi_cli/utils/aiohttp.py`)
+> 4. **feat(session)**: 使用 LLM 优化会话标题生成 — 在首回合对话结束后，后台异步调用 LLM 根据对话内容生成更准确的会话标题；提取 `session_title.py` 模块以复用 Web API 和 CLI 会话逻辑。(`src/kimi_cli/session_title.py`, `src/kimi_cli/soul/kimisoul.py`, `src/kimi_cli/web/api/sessions.py`)
 
 [![Commit Activity](https://img.shields.io/github/commit-activity/w/MoonshotAI/kimi-cli)](https://github.com/MoonshotAI/kimi-cli/graphs/commit-activity)
 [![Checks](https://img.shields.io/github/check-runs/MoonshotAI/kimi-cli/main)](https://github.com/MoonshotAI/kimi-cli/actions)

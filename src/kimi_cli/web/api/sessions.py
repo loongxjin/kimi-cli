@@ -23,6 +23,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from kimi_cli import logger
 from kimi_cli.metadata import load_metadata, save_metadata
 from kimi_cli.session import Session as KimiCLISession
+from kimi_cli.session_title import extract_first_turn_from_wire, generate_title_with_llm
 from kimi_cli.utils.subprocess_env import get_clean_env
 from kimi_cli.web.auth import is_origin_allowed, is_private_ip, verify_token
 from kimi_cli.web.models import (
@@ -625,61 +626,6 @@ async def update_session(
     return updated_session
 
 
-def extract_first_turn_from_wire(session_dir: Path) -> tuple[str, str] | None:
-    """Extract the first turn's user message and assistant response from wire.jsonl.
-
-    Returns:
-        tuple[str, str] | None: (user_message, assistant_response) or None if not found
-    """
-    wire_file = session_dir / "wire.jsonl"
-    if not wire_file.exists():
-        return None
-
-    user_message: str | None = None
-    assistant_response_parts: list[str] = []
-    in_first_turn = False
-
-    try:
-        with open(wire_file, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                    message = record.get("message", {})
-                    msg_type = message.get("type")
-
-                    if msg_type == "TurnBegin":
-                        if in_first_turn:
-                            # Second turn started, stop
-                            break
-                        in_first_turn = True
-                        user_input = message.get("payload", {}).get("user_input")
-                        if user_input:
-                            from kosong.message import Message
-
-                            msg = Message(role="user", content=user_input)
-                            user_message = msg.extract_text(" ")
-
-                    elif msg_type == "ContentPart" and in_first_turn:
-                        payload = message.get("payload", {})
-                        if payload.get("type") == "text" and payload.get("text"):
-                            assistant_response_parts.append(payload["text"])
-
-                    elif msg_type == "TurnEnd" and in_first_turn:
-                        break
-
-                except json.JSONDecodeError:
-                    continue
-    except OSError:
-        return None
-
-    if user_message and assistant_response_parts:
-        return (user_message, "".join(assistant_response_parts))
-    return None
-
-
 @router.post("/{session_id}/fork", summary="Fork a session at a specific turn")
 async def fork_session_endpoint(
     session_id: UUID,
@@ -796,62 +742,9 @@ async def generate_session_title(
         return GenerateTitleResponse(title=fallback_title)
 
     # Try to generate title using AI
-    title = fallback_title
-    ai_generated = False
-    try:
-        from kosong import generate
-        from kosong.message import Message
-
-        from kimi_cli.auth.oauth import OAuthManager
-        from kimi_cli.config import load_config
-        from kimi_cli.llm import create_llm
-
-        config = load_config()
-        model_name = config.default_model
-
-        if model_name and model_name in config.models:
-            model_config = config.models[model_name]
-            provider_config = config.providers.get(model_config.provider)
-
-            if provider_config:
-                oauth = OAuthManager(config)
-                await oauth.ensure_fresh()
-                llm = create_llm(provider_config, model_config, oauth=oauth)
-
-                if llm:
-                    system_prompt = (
-                        "Generate a concise session title (max 50 characters) "
-                        "based on the conversation. "
-                        "Only respond with the title text, nothing else. "
-                        "No quotes, no explanation."
-                    )
-
-                    prompt = f"""User: {user_message[:300]}
-Assistant: {(assistant_response or "")[:300]}
-
-Title:"""
-
-                    result = await generate(
-                        chat_provider=llm.chat_provider,
-                        system_prompt=system_prompt,
-                        tools=[],
-                        history=[Message(role="user", content=prompt)],
-                    )
-
-                    generated_title = result.message.extract_text().strip()
-                    # Remove quotes if present
-                    generated_title = generated_title.strip("\"'")
-
-                    if generated_title and len(generated_title) <= 50:
-                        title = generated_title
-                        ai_generated = True
-                    elif generated_title:
-                        title = shorten(generated_title, width=50)
-                        ai_generated = True
-
-    except Exception as e:
-        logger.warning(f"Failed to generate title using AI: {e}")
-        # Keep fallback_title, ai_generated stays False
+    ai_title = await generate_title_with_llm(user_message, assistant_response)
+    title = ai_title if ai_title is not None else fallback_title
+    ai_generated = ai_title is not None
 
     # Read-modify-write: reload fresh state to avoid overwriting
     # worker changes made during the LLM call

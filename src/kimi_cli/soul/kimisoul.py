@@ -550,25 +550,31 @@ class KimiSoul:
             if not command_call:
                 session = self._runtime.session
                 if session.state.custom_title is None:
+                    from kimi_cli.session_state import (
+                        load_session_state,
+                        save_session_state,
+                    )
+                    from kimi_cli.session_title import improve_session_title
                     from kimi_cli.utils.string import shorten
 
-                    title = shorten(
-                        Message(role="user", content=user_input).extract_text(" "),
-                        width=50,
-                    )
-                    if title:
-                        from kimi_cli.session_state import (
-                            load_session_state,
-                            save_session_state,
-                        )
-
-                        # Read-modify-write: load fresh state to avoid
-                        # overwriting concurrent web changes
+                    user_text = Message(role="user", content=user_input).extract_text(" ")
+                    fallback = shorten(user_text, width=50)
+                    if fallback:
+                        # Save fallback synchronously (preserves existing behavior)
                         fresh = load_session_state(session.dir)
                         if fresh.custom_title is None:
-                            fresh.custom_title = title
+                            fresh.custom_title = fallback
                             save_session_state(fresh, session.dir)
                         session.state.custom_title = fresh.custom_title
+
+                        # Try to improve with LLM in the background
+                        async def _safe_improve_title() -> None:
+                            try:
+                                await improve_session_title(session, user_input=user_text)
+                            except Exception:
+                                logger.exception("Background title improvement failed")
+
+                        asyncio.create_task(_safe_improve_title())
         finally:
             if turn_started and not turn_finished:
                 wire_send(TurnEnd())

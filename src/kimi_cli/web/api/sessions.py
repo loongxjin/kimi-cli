@@ -742,7 +742,9 @@ async def generate_session_title(
         return GenerateTitleResponse(title=fallback_title)
 
     # Try to generate title using AI
-    ai_title = await generate_title_with_llm(user_message, assistant_response)
+    ai_title = await generate_title_with_llm(
+        user_message, assistant_response, session_id=str(session_id)
+    )
     title = ai_title if ai_title is not None else fallback_title
     ai_generated = ai_title is not None
 

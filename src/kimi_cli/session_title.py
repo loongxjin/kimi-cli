@@ -71,8 +71,8 @@ def extract_first_turn_from_wire(session_dir: Path) -> tuple[str, str] | None:
 async def _poll_first_turn(session_dir: Path) -> tuple[str, str] | None:
     """Wait briefly for the wire recorder to flush, then extract the first turn."""
     first_turn = None
-    for _ in range(5):
-        await asyncio.sleep(0.05)
+    for _ in range(10):
+        await asyncio.sleep(0.1)
         first_turn = extract_first_turn_from_wire(session_dir)
         if first_turn:
             break
@@ -86,6 +86,12 @@ def _persist_title_result(
 ) -> None:
     """Read-modify-write session state after attempting title generation."""
     fresh = load_session_state(session_dir)
+    if fresh.title_generated:
+        # Another task already generated a title; don't overwrite it
+        session.state.custom_title = fresh.custom_title
+        session.state.title_generated = fresh.title_generated
+        session.state.title_generate_attempts = fresh.title_generate_attempts
+        return
     if ai_title:
         fresh.custom_title = ai_title
         fresh.title_generated = True
@@ -94,15 +100,15 @@ def _persist_title_result(
     save_session_state(fresh, session_dir)
 
     session.state.custom_title = fresh.custom_title
-    if ai_title:
-        session.state.title_generated = True
-    else:
-        session.state.title_generate_attempts = fresh.title_generate_attempts
+    session.state.title_generated = fresh.title_generated
+    session.state.title_generate_attempts = fresh.title_generate_attempts
 
 
 async def generate_title_with_llm(
     user_message: str,
     assistant_response: str | None,
+    *,
+    session_id: str | None = None,
 ) -> str | None:
     """Generate a session title using the configured default LLM.
 
@@ -130,7 +136,7 @@ async def generate_title_with_llm(
 
         oauth = OAuthManager(config)
         await oauth.ensure_fresh()
-        llm = create_llm(provider_config, model_config, oauth=oauth)
+        llm = create_llm(provider_config, model_config, oauth=oauth, session_id=session_id)
 
         if not llm:
             return None
@@ -198,6 +204,6 @@ async def improve_session_title(
     if state.title_generate_attempts >= 3 or state.title_generated:
         return None
 
-    ai_title = await generate_title_with_llm(user_message, assistant_response)
+    ai_title = await generate_title_with_llm(user_text, assistant_response, session_id=session.id)
     _persist_title_result(session_dir, session, ai_title)
     return ai_title

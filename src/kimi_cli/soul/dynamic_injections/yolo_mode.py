@@ -13,10 +13,11 @@ if TYPE_CHECKING:
 _YOLO_INJECTION_TYPE = "yolo_mode"
 
 _YOLO_PROMPT = (
-    "You are running in non-interactive mode. The user cannot answer questions "
-    "or provide feedback during execution.\n"
-    "- Do NOT call AskUserQuestion. If you need to make a decision, make your "
-    "best judgment and proceed.\n"
+    "You are running in yolo mode. Tool approvals are auto-approved, but you can "
+    "still ask the user questions via AskUserQuestion when you genuinely need their "
+    "input.\n"
+    "- You MAY call AskUserQuestion when the user's preference genuinely matters "
+    "and cannot be reasonably inferred.\n"
     "- For EnterPlanMode / ExitPlanMode, they will be auto-approved. You can use "
     "them normally but expect no user feedback."
 )

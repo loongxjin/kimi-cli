@@ -183,21 +183,24 @@ async def test_ask_user_no_tool_call(ask_user_tool: AskUserQuestion):
 # ---------------------------------------------------------------------------
 
 
-async def test_ask_user_yolo_auto_dismiss():
-    """In yolo mode, auto-dismiss without wire or tool_call context (short-circuits everything)."""
+async def test_ask_user_yolo_no_longer_short_circuits():
+    """In yolo mode, AskUserQuestion should still go through normal flow (no short-circuit)."""
     tool = AskUserQuestion()
     tool.bind_approval(is_yolo=lambda: True)
 
-    # Deliberately do NOT set wire or tool_call — yolo should short-circuit before needing them
+    # Without wire, should get Wire error (NOT auto-dismiss)
     wire_token = _current_wire.set(None)
+    tool_call = ToolCall(
+        id="tc-yolo-no-wire",
+        function=ToolCall.FunctionBody(name="AskUserQuestion", arguments=None),
+    )
+    tc_token = current_tool_call.set(tool_call)
     try:
         result = await tool(_make_params())
-        assert not result.is_error
-        assert isinstance(result.output, str)
-        parsed = json.loads(result.output)
-        assert parsed["answers"] == {}
-        assert "yolo" in parsed.get("note", "").lower()
+        assert result.is_error
+        assert "Wire" in result.message
     finally:
+        current_tool_call.reset(tc_token)
         _current_wire.reset(wire_token)
 
 
@@ -227,11 +230,20 @@ async def test_ask_user_yolo_dynamic_toggle():
     tool = AskUserQuestion()
     tool.bind_approval(is_yolo=lambda: yolo_state["enabled"])
 
-    # First call: yolo on -> auto-dismiss
-    result = await tool(_make_params())
-    assert not result.is_error
-    assert isinstance(result.output, str)
-    assert "yolo" in result.output.lower()
+    # First call: yolo on -> still needs wire (no short-circuit)
+    wire_token = _current_wire.set(None)
+    tool_call = ToolCall(
+        id="tc-toggle-1",
+        function=ToolCall.FunctionBody(name="AskUserQuestion", arguments=None),
+    )
+    tc_token = current_tool_call.set(tool_call)
+    try:
+        result = await tool(_make_params())
+        assert result.is_error
+        assert "Wire" in result.message
+    finally:
+        current_tool_call.reset(tc_token)
+        _current_wire.reset(wire_token)
 
     # Toggle yolo off
     yolo_state["enabled"] = False
@@ -239,7 +251,7 @@ async def test_ask_user_yolo_dynamic_toggle():
     # Second call: yolo off -> needs wire (which isn't set -> error)
     wire_token = _current_wire.set(None)
     tool_call = ToolCall(
-        id="tc-toggle",
+        id="tc-toggle-2",
         function=ToolCall.FunctionBody(name="AskUserQuestion", arguments=None),
     )
     tc_token = current_tool_call.set(tool_call)

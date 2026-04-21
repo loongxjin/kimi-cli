@@ -74,17 +74,6 @@ class AskUserQuestion(CallableTool2[Params]):
 
     @override
     async def __call__(self, params: Params) -> ToolReturnValue:
-        if self._is_yolo and self._is_yolo():
-            return ToolReturnValue(
-                is_error=False,
-                output=(
-                    '{"answers": {}, "note": "Running in non-interactive'
-                    ' (yolo) mode. Make your own decision."}'
-                ),
-                message="Non-interactive mode, auto-dismissed.",
-                display=[BriefDisplayBlock(text="Auto-dismissed (yolo)")],
-            )
-
         wire = get_wire_or_none()
         if wire is None:
             return ToolError(

@@ -17,10 +17,12 @@ from hashlib import md5
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
+import pyperclip
 from kaos.path import KaosPath
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.clipboard.base import ClipboardData
 from prompt_toolkit.clipboard.pyperclip import PyperclipClipboard
 from prompt_toolkit.completion import (
     CompleteEvent,
@@ -49,6 +51,7 @@ from prompt_toolkit.layout.controls import BufferControl, UIContent, UIControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.selection import SelectionType
 from prompt_toolkit.utils import get_cwidth
 from pydantic import BaseModel, ValidationError
 
@@ -1066,6 +1069,27 @@ def _truncate_right(text: str, max_cols: int) -> str:
     return "".join(chars) + ellipsis
 
 
+class _SafePyperclipClipboard(PyperclipClipboard):
+    """PyperclipClipboard subclass that handles None from pyperclip.paste().
+
+    When the clipboard contains only image data (no text), pyperclip.paste()
+    returns None, which causes an unhandled TypeError in the base class.
+    This subclass returns an empty ClipboardData instead.
+    """
+
+    @override
+    def get_data(self) -> ClipboardData:
+        text = pyperclip.paste()
+        if text is None:  # type: ignore[reportUnnecessaryComparison]
+            return ClipboardData(text="")
+        if self._data and self._data.text == text:
+            return self._data
+        return ClipboardData(
+            text=text,
+            type=SelectionType.LINES if "\n" in text else SelectionType.CHARACTERS,
+        )
+
+
 @dataclass(slots=True)
 class _ToastEntry:
     topic: str | None
@@ -1469,7 +1493,7 @@ class CustomPromptSession:
                 self._insert_pasted_text(event.current_buffer, clipboard_data.text)
                 event.app.invalidate()
 
-            clipboard = PyperclipClipboard()
+            clipboard = _SafePyperclipClipboard()
         else:
             clipboard = None
 

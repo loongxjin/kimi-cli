@@ -146,16 +146,34 @@ class KimiToolset:
 
             tool = self._tool_dict[tool_call.function.name]
 
+            raw_args = tool_call.function.arguments or "{}"
+            arguments: JsonType
             try:
-                arguments: JsonType = json.loads(tool_call.function.arguments or "{}", strict=False)
+                arguments = json.loads(raw_args, strict=False)
             except json.JSONDecodeError as e:
-                logger.warning(
-                    "Tool call JSON parse error: {tool_name} (call_id={call_id}): {error}",
-                    tool_name=tool_call.function.name,
-                    call_id=tool_call.id,
-                    error=e,
-                )
-                return ToolResult(tool_call_id=tool_call.id, return_value=ToolParseError(str(e)))
+                # Try to repair truncated/incomplete JSON from streaming output
+                try:
+                    import streamingjson  # type: ignore[reportMissingTypeStubs]
+
+                    lexer = streamingjson.Lexer()
+                    lexer.append_string(raw_args)
+                    arguments = json.loads(lexer.complete_json(), strict=False)
+                    logger.warning(
+                        "Repaired truncated JSON for {tool_name} (call_id={call_id})",
+                        tool_name=tool_call.function.name,
+                        call_id=tool_call.id,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Tool call JSON parse error: {tool_name} (call_id={call_id}): {error}",
+                        tool_name=tool_call.function.name,
+                        call_id=tool_call.id,
+                        error=e,
+                    )
+                    return ToolResult(
+                        tool_call_id=tool_call.id,
+                        return_value=ToolParseError(str(e)),
+                    )
 
             async def _call():
                 tool_input_dict = arguments if isinstance(arguments, dict) else {}

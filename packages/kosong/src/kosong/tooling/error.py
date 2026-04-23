@@ -16,7 +16,11 @@ class ToolParseError(ToolError):
 
     def __init__(self, message: str):
         super().__init__(
-            message=f"Error parsing JSON arguments: {message}",
+            message=(
+                f"Error parsing JSON arguments: {message}. "
+                "Ensure all strings are properly closed and "
+                "special characters (e.g. quotes, backslashes, newlines) are correctly escaped."
+            ),
             brief="Invalid arguments",
         )
 

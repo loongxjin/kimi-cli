@@ -1,4 +1,5 @@
 import asyncio
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Self, override
@@ -114,7 +115,9 @@ class Shell(CallableTool2[Params]):
                 return builder.ok("Command executed successfully.")
             else:
                 return builder.error(
-                    f"Command failed with exit code: {exitcode}.",
+                    f"Command failed with exit code: {exitcode}.\n"
+                    f"Command: {params.command}\n"
+                    f"Working directory: {os.getcwd()}",
                     brief=f"Failed with exit code: {exitcode}",
                 )
         except TimeoutError:

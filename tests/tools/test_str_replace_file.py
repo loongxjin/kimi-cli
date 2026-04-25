@@ -246,3 +246,136 @@ async def test_replace_empty_strings(
     assert not result.is_error
     assert "successfully edited" in result.message
     assert await file_path.read_text() == "Hello !"
+
+
+async def test_replace_space_tab_mismatch(
+    str_replace_file_tool: StrReplaceFile, temp_work_dir: KaosPath
+):
+    """File uses tabs, LLM sends spaces — fuzzy match should work."""
+    file_path = temp_work_dir / "test.py"
+    # File content uses tab indentation
+    original_content = "def hello():\n\tprint('world')\n\treturn True\n"
+    await file_path.write_text(original_content)
+
+    # LLM sends spaces instead of tabs
+    result = await str_replace_file_tool(
+        Params(
+            path=str(file_path),
+            edit=Edit(
+                old="    print('world')\n    return True",
+                new="    print('hello')\n    return False",
+            ),
+        )
+    )
+
+    assert not result.is_error
+    assert "whitespace-normalized match" in result.message
+    # The fuzzy match finds the tab-indented text and replaces with LLM's new value
+    new_content = await file_path.read_text()
+    assert "print('hello')" in new_content
+    assert "return False" in new_content
+
+
+async def test_replace_tab_space_mismatch(
+    str_replace_file_tool: StrReplaceFile, temp_work_dir: KaosPath
+):
+    """File uses spaces, LLM sends tabs — fuzzy match should work."""
+    file_path = temp_work_dir / "test.py"
+    # File content uses space indentation
+    original_content = "def hello():\n    print('world')\n    return True\n"
+    await file_path.write_text(original_content)
+
+    # LLM sends tabs instead of spaces
+    result = await str_replace_file_tool(
+        Params(
+            path=str(file_path),
+            edit=Edit(
+                old="\tprint('world')\n\treturn True", new="\tprint('hello')\n\treturn False"
+            ),
+        )
+    )
+
+    assert not result.is_error
+    assert "whitespace-normalized match" in result.message
+    new_content = await file_path.read_text()
+    assert "print('hello')" in new_content
+    assert "return False" in new_content
+
+
+async def test_replace_exact_match_no_fuzzy(
+    str_replace_file_tool: StrReplaceFile, temp_work_dir: KaosPath
+):
+    """Exact match should NOT trigger fuzzy match."""
+    file_path = temp_work_dir / "test.txt"
+    await file_path.write_text("Hello world!")
+
+    result = await str_replace_file_tool(
+        Params(path=str(file_path), edit=Edit(old="world", new="universe"))
+    )
+
+    assert not result.is_error
+    assert "whitespace-normalized" not in result.message
+    assert await file_path.read_text() == "Hello universe!"
+
+
+async def test_replace_whitespace_fuzzy_still_no_match(
+    str_replace_file_tool: StrReplaceFile, temp_work_dir: KaosPath
+):
+    """Completely unrelated content — fuzzy match should also fail."""
+    file_path = temp_work_dir / "test.txt"
+    await file_path.write_text("Hello world!\n")
+
+    result = await str_replace_file_tool(
+        Params(path=str(file_path), edit=Edit(old="xyz_not_in_file_abc", new="replacement"))
+    )
+
+    assert result.is_error
+    assert "No replacements were made" in result.message
+    assert await file_path.read_text() == "Hello world!\n"
+
+
+async def test_replace_fuzzy_enhanced_error_hint(
+    str_replace_file_tool: StrReplaceFile, temp_work_dir: KaosPath
+):
+    """When both exact and fuzzy fail, error message should include helpful context."""
+    file_path = temp_work_dir / "test.py"
+    await file_path.write_text("def hello():\n    print('world')\n    return True\n")
+
+    # Send something that partially matches but isn't fully correct
+    result = await str_replace_file_tool(
+        Params(
+            path=str(file_path),
+            edit=Edit(old="print('different')", new="print('replaced')"),
+        )
+    )
+
+    assert result.is_error
+    assert "No replacements" in result.message
+    # The hint should mention line context
+    assert "line" in result.message.lower() or "repr" in result.message.lower()
+
+
+async def test_replace_fuzzy_preserves_original_indentation(
+    str_replace_file_tool: StrReplaceFile, temp_work_dir: KaosPath
+):
+    """Fuzzy match finds the text even when whitespace differs."""
+    file_path = temp_work_dir / "test.py"
+    # File uses tab indentation (common in real projects)
+    original_content = "class Foo:\n\tdef bar(self):\n\t\tx = 1\n\t\treturn x\n"
+    await file_path.write_text(original_content)
+
+    # LLM sends 4-space indentation in old string
+    result = await str_replace_file_tool(
+        Params(
+            path=str(file_path),
+            edit=Edit(old="    x = 1\n    return x", new="    x = 2\n    return x"),
+        )
+    )
+
+    assert not result.is_error
+    assert "whitespace-normalized match" in result.message
+    new_content = await file_path.read_text()
+    # The fuzzy match found the tab-indented text and replaced it with the
+    # LLM-provided new value (which uses spaces)
+    assert "x = 2" in new_content
+    assert "return x" in new_content

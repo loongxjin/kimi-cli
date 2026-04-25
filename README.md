@@ -7,6 +7,11 @@
 > 2. **fix(message)**: 合并 system message 和 text output 为单个 TextPart — 兼容 OpenAI 格式模型对 tool-role 消息内容的要求，避免 list-of-dicts 格式解析失败。(`src/kimi_cli/soul/message.py`)
 > 3. **fix(aiohttp)**: 启用 `trust_env=True` — 使 aiohttp ClientSession 正确读取系统代理环境变量（HTTP_PROXY 等）。(`src/kimi_cli/utils/aiohttp.py`)
 > 4. **feat(session)**: 使用 LLM 优化会话标题生成 — 在首回合对话结束后，后台异步调用 LLM 根据对话内容生成更准确的会话标题；提取 `session_title.py` 模块以复用 Web API 和 CLI 会话逻辑。(`src/kimi_cli/session_title.py`, `src/kimi_cli/soul/kimisoul.py`, `src/kimi_cli/web/api/sessions.py`)
+> 5. **fix(shell)**: 改善 shell 命令失败时的错误信息 — 增加 Command 和 Working directory 便于定位问题；修复剪贴板仅含图片数据时 `pyperclip.paste()` 返回 `None` 导致的 TypeError。(`src/kimi_cli/tools/shell/__init__.py`, `src/kimi_cli/ui/shell/prompt.py`)
+> 6. **feat(yolo)**: 修改 yolo mode 行为 — 允许在真正需要用户输入时调用 `AskUserQuestion`，而非完全禁止提问。(`src/kimi_cli/soul/dynamic_injections/yolo_mode.py`)
+> 7. **feat(file-replace)**: 添加 whitespace-normalized 模糊匹配 — 当精确匹配失败时，自动尝试归一化空白字符后的模糊匹配，提升字符串替换成功率。(`src/kimi_cli/tools/file/replace.py`)
+> 8. **fix(tooling)**: 改进 JSON 参数解析错误提示 — 增加对字符串闭合和特殊字符（引号、反斜杠、换行等）正确转义的指导。(`packages/kosong/src/kosong/tooling/error.py`)
+> 9. **feat(toolset)**: 使用 `streamingjson` 修复流式输出中截断/不完整的 JSON — 提升工具调用在流式场景下的稳定性。(`src/kimi_cli/soul/toolset.py`)
 
 [![Commit Activity](https://img.shields.io/github/commit-activity/w/MoonshotAI/kimi-cli)](https://github.com/MoonshotAI/kimi-cli/graphs/commit-activity)
 [![Checks](https://img.shields.io/github/check-runs/MoonshotAI/kimi-cli/main)](https://github.com/MoonshotAI/kimi-cli/actions)

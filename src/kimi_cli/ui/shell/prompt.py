@@ -17,12 +17,10 @@ from hashlib import md5
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
-import pyperclip
 from kaos.path import KaosPath
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.clipboard.base import ClipboardData
 from prompt_toolkit.clipboard.pyperclip import PyperclipClipboard
 from prompt_toolkit.completion import (
     CompleteEvent,
@@ -51,7 +49,6 @@ from prompt_toolkit.layout.controls import BufferControl, UIContent, UIControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.selection import SelectionType
 from prompt_toolkit.utils import get_cwidth
 from pydantic import BaseModel, ValidationError
 
@@ -69,6 +66,7 @@ from kimi_cli.ui.theme import get_prompt_style, get_toolbar_colors
 from kimi_cli.utils.clipboard import (
     grab_media_from_clipboard,
     is_clipboard_available,
+    is_media_clipboard_available,
 )
 from kimi_cli.utils.logging import logger
 from kimi_cli.utils.slashcmd import SlashCommand
@@ -1069,27 +1067,6 @@ def _truncate_right(text: str, max_cols: int) -> str:
     return "".join(chars) + ellipsis
 
 
-class _SafePyperclipClipboard(PyperclipClipboard):
-    """PyperclipClipboard subclass that handles None from pyperclip.paste().
-
-    When the clipboard contains only image data (no text), pyperclip.paste()
-    returns None, which causes an unhandled TypeError in the base class.
-    This subclass returns an empty ClipboardData instead.
-    """
-
-    @override
-    def get_data(self) -> ClipboardData:
-        text = pyperclip.paste()
-        if text is None:  # type: ignore[reportUnnecessaryComparison]
-            return ClipboardData(text="")
-        if self._data and self._data.text == text:
-            return self._data
-        return ClipboardData(
-            text=text,
-            type=SelectionType.LINES if "\n" in text else SelectionType.CHARACTERS,
-        )
-
-
 @dataclass(slots=True)
 class _ToastEntry:
     topic: str | None
@@ -1239,7 +1216,8 @@ class CustomPromptSession:
         self._last_ui_state: PromptUIState = PromptUIState.NORMAL_INPUT
         self._suspended_buffer_document: Document | None = None
         clipboard_available = is_clipboard_available()
-        self._tips = _build_toolbar_tips(clipboard_available)
+        media_clipboard_available = is_media_clipboard_available()
+        self._tips = _build_toolbar_tips(clipboard_available or media_clipboard_available)
         self._tip_rotation_index: int = random.randrange(len(self._tips)) if self._tips else 0
 
         history_entries = _load_history_entries(self._history_file)
@@ -1499,7 +1477,7 @@ class CustomPromptSession:
         def _(event: KeyPressEvent) -> None:
             self._handle_bracketed_paste(event)
 
-        if clipboard_available:
+        if clipboard_available or media_clipboard_available:
 
             @_kb.add("c-v", eager=True)
             def _(event: KeyPressEvent) -> None:
@@ -1508,15 +1486,21 @@ class CustomPromptSession:
                 track("shortcut_paste")
                 if self._try_paste_media(event):
                     return
-                clipboard_data = event.app.clipboard.get_data()
-                if clipboard_data is None:  # type: ignore[reportUnnecessaryComparison]
-                    return
-                self._insert_pasted_text(event.current_buffer, clipboard_data.text)
-                event.app.invalidate()
+                if clipboard_available:
+                    try:
+                        clipboard_data = event.app.clipboard.get_data()
+                    except Exception:
+                        return
+                    if clipboard_data is None:  # type: ignore[reportUnnecessaryComparison]
+                        return
+                    self._insert_pasted_text(event.current_buffer, clipboard_data.text)
+                    event.app.invalidate()
 
-            clipboard = _SafePyperclipClipboard()
-        else:
-            clipboard = None
+        # Only use PyperclipClipboard when pyperclip actually works.
+        # PromptSession built-in keybindings (ctrl-k, ctrl-w, ctrl-y)
+        # use clipboard without error handling, so a broken clipboard
+        # object would crash the UI.
+        clipboard = PyperclipClipboard() if clipboard_available else None
 
         self._session = PromptSession[str](
             message=self._render_message,
@@ -1925,7 +1909,13 @@ class CustomPromptSession:
         image files are cached and inserted as placeholders.
         Returns True if any media content was inserted.
         """
-        result = grab_media_from_clipboard()
+        try:
+            result = grab_media_from_clipboard()
+        except Exception:
+            # ImageGrab.grabclipboard() may fail on headless Linux if the
+            # real xclip cannot connect to an X server. Silently ignore so
+            # that the text-paste fallback can still be attempted.
+            return False
         if result is None:
             return False
 
@@ -2124,11 +2114,14 @@ class CustomPromptSession:
             self._tip_rotation_index += 1
             self._last_tip_rotate_time = now
 
-        # Status flags: yolo / plan
+        # Status flags: yolo / afk / plan
         status = self._status_provider()
         if status.yolo_enabled:
             fragments.extend([(tc.yolo_label, "yolo"), ("", "  ")])
             remaining -= 6  # "yolo" = 4, "  " = 2
+        if status.afk_enabled:
+            fragments.extend([(tc.afk_label, "afk"), ("", "  ")])
+            remaining -= 5  # "afk" = 3, "  " = 2
         if status.plan_mode:
             fragments.extend([(tc.plan_label, "plan"), ("", "  ")])
             remaining -= 6

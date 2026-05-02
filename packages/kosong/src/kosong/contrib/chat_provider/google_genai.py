@@ -655,10 +655,14 @@ def message_to_google_genai(message: Message) -> Content:
         if tool_call.function.arguments:
             try:
                 parsed_arguments = json.loads(tool_call.function.arguments, strict=False)
-            except json.JSONDecodeError as exc:  # pragma: no cover - defensive guard
-                raise ChatProviderError("Tool call arguments must be valid JSON.") from exc
+            except json.JSONDecodeError:  # defensive guard for malformed history
+                # Historical tool calls may contain malformed JSON arguments
+                # (e.g. from a previous LLM output that failed JSON validation).
+                # Fall back to an empty dict so the conversation can continue
+                # instead of permanently blocking the session.
+                parsed_arguments = {}
             if not isinstance(parsed_arguments, dict):
-                raise ChatProviderError("Tool call arguments must be a JSON object.")
+                parsed_arguments = {}
             args = cast(dict[str, object], parsed_arguments)
         else:
             args = {}

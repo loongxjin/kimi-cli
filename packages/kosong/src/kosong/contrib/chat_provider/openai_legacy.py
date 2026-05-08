@@ -1,4 +1,5 @@
 import copy
+import json
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any, Self, Unpack, cast
@@ -199,6 +200,18 @@ class OpenAILegacy:
         # So we use `system` role here. OpenAIResponses will use `developer` role.
         # See https://cdn.openai.com/spec/model-spec-2024-05-08.html#definitions
         message = message.model_copy(deep=True)
+        # defensive guard for malformed history
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                if tc.function.arguments:
+                    try:
+                        json.loads(tc.function.arguments, strict=False)
+                    except json.JSONDecodeError:
+                        # Historical tool calls may contain malformed JSON arguments
+                        # (e.g. from a previous LLM output that failed JSON validation).
+                        # Fall back to an empty dict so the conversation can continue
+                        # instead of permanently blocking the session.
+                        tc.function.arguments = "{}"
         reasoning_content: str = ""
         content: list[ContentPart] = []
         for part in message.content:

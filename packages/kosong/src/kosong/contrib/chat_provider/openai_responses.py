@@ -1,4 +1,5 @@
 import copy
+import json
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any, Self, TypedDict, Unpack, cast, get_args
@@ -328,9 +329,18 @@ class OpenAIResponses:
             flush_pending_parts()
 
         for tool_call in message.tool_calls or []:
+            arguments = tool_call.function.arguments or "{}"
+            try:
+                json.loads(arguments, strict=False)
+            except json.JSONDecodeError:  # defensive guard for malformed history
+                # Historical tool calls may contain malformed JSON arguments
+                # (e.g. from a previous LLM output that failed JSON validation).
+                # Fall back to an empty dict so the conversation can continue
+                # instead of permanently blocking the session.
+                arguments = "{}"
             result.append(
                 {
-                    "arguments": tool_call.function.arguments or "{}",
+                    "arguments": arguments,
                     "call_id": tool_call.id,
                     "name": tool_call.function.name,
                     "type": "function_call",

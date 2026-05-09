@@ -207,6 +207,7 @@ class KimiSoul:
         ]
         self._hook_engine: HookEngine = HookEngine()
         self._stop_hook_active: bool = False
+        self._pending_background_tasks: set[asyncio.Task[Any]] = set()
         if self._runtime.role == "root":
             self._runtime.notifications.ack_ids("llm", extract_notification_ids(context.history))
 
@@ -691,7 +692,9 @@ class KimiSoul:
                             except Exception:
                                 logger.exception("Background title improvement failed")
 
-                        asyncio.create_task(_safe_improve_title())
+                        task = asyncio.create_task(_safe_improve_title())
+                        self._pending_background_tasks.add(task)
+                        task.add_done_callback(self._pending_background_tasks.discard)
         finally:
             if turn_started and not turn_finished:
                 wire_send(TurnEnd())
